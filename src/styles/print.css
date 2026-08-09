@@ -1,0 +1,112 @@
+/* Habillage dédié à l'impression : un vrai tableau de service, pas une interface
+   numérique posée sur du papier. Typographie sobre (poids moyens, pas de gras
+   lourd ni de monospace "terminal"), grille fine plutôt qu'un quadrillage épais. */
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 12mm;
+  }
+
+  body { background: #fff; }
+
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .app-header,
+  .no-print {
+    display: none !important;
+  }
+
+  .app-content {
+    padding: 0;
+    max-width: none;
+  }
+
+  .feuille-export {
+    border: none;
+    box-shadow: none;
+    padding: 0;
+    max-width: none;
+  }
+
+  /* En-tête façon document imprimé : serif fin, capitales espacées mais pas de
+     gras appuyé — élégant plutôt que martelé. */
+  .entete-export { margin-bottom: 1.1rem; }
+  .entete-export h2 {
+    font-family: Georgia, 'Times New Roman', Cambria, serif;
+    font-size: 1.3rem;
+    font-weight: 500;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: #000;
+  }
+  .entete-export-dates {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    color: #333;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+  }
+
+  /* Grille sobre : un cadre extérieur net, des lignes internes fines et grises
+     plutôt qu'un quadrillage noir complet. Police neutre pour le corps du
+     tableau — pas la police d'interface, pas de monospace "informatique". */
+  .table-export {
+    border: 1px solid #000;
+    border-radius: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  }
+  .table-export th {
+    background: #fff !important;
+    color: #000 !important;
+    border: none;
+    border-bottom: 1px solid #000;
+    border-right: 1px solid #ddd;
+    padding: 0.55rem 0.3rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+  .table-export th:last-child { border-right: none; }
+  .table-export th .jour-date { color: #666; }
+
+  .table-export td {
+    padding: 0.55rem 0.4rem;
+    font-size: 0.92rem;
+    border: none;
+    border-bottom: 1px solid #ddd;
+    border-right: 1px solid #ddd;
+  }
+  .table-export td:last-child { border-right: none; }
+  .table-export tbody tr:last-child td { border-bottom: none; }
+  .table-export tbody tr:nth-child(even) { background: none; }
+
+  .nom-export { border-right: 1px solid #000 !important; font-weight: 600; }
+  .case-aucune { color: #bbb; }
+
+  /* Pas de puce/badge à l'impression : juste du texte dans la cellule. Le
+     créneau travaillé se distingue par un poids moyen + chiffres tabulaires
+     (pas du monospace), un statut de repos par un gris — jamais par la couleur. */
+  .badge-export {
+    display: inline;
+    background: none !important;
+    border: none !important;
+    padding: 0;
+    min-width: 0;
+    border-radius: 0;
+    color: #666 !important;
+    font-weight: 400;
+  }
+  .badge-travail {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif !important;
+    color: #000 !important;
+    font-weight: 600;
+    font-size: 0.95rem;
+    letter-spacing: 0.01em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Filet de sécurité si le contenu déborde malgré tout sur plusieurs pages. */
+  .table-export thead { display: table-header-group; }
+  .table-export tr { page-break-inside: avoid; }
+}
