@@ -75,3 +75,16 @@ export function formatJourCourt(date) {
 export function formatDateCourte(date) {
   return date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', timeZone: 'UTC' });
 }
+
+/** Clé numérique triable d'une semaine : 2026 s12 → 202612. Le numéro ISO ne dépasse pas 53. */
+export function cleSemaine(annee, numero) {
+  return annee * 100 + numero;
+}
+
+/**
+ * Décompose une clé de semaine en `{ annee, numero }`. À n'appeler que sur une clé strictement
+ * positive : `0` est une sentinelle signifiant « aucune semaine réelle », pas une semaine 0.
+ */
+export function depuisCleSemaine(cle) {
+  return { annee: Math.floor(cle / 100), numero: cle % 100 };
+}

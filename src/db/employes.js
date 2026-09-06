@@ -7,16 +7,23 @@ export async function listerEmployes() {
   return tous;
 }
 
-export function ajouterEmploye({ nom, prenom }) {
-  return db.employes.add({ nom, prenom, actif: true, semaineType: Array(7).fill(null) });
+/** `debutCle` est fourni par l'appelant (clé de la semaine courante) : la couche db ne connaît pas « maintenant ». */
+export function ajouterEmploye({ nom, prenom, debutCle }) {
+  return db.employes.add({ nom, prenom, debutCle, finCle: null, semaineType: Array(7).fill(null) });
 }
 
 export function modifierEmploye(id, { nom, prenom }) {
   return db.employes.update(id, { nom, prenom });
 }
 
-export function toggleActifEmploye(id, actif) {
-  return db.employes.update(id, { actif });
+/** Marque l'employé parti : `finCle` (fourni par l'appelant) devient sa dernière semaine d'appartenance à l'effectif par défaut. */
+export function marquerEmployeParti(id, finCle) {
+  return db.employes.update(id, { finCle });
+}
+
+/** Annule un départ : l'employé redevient présent sans limite de fin. */
+export function reintegrerEmploye(id) {
+  return db.employes.update(id, { finCle: null });
 }
 
 /** Enregistre le modèle de semaine type (7 entrées, une par jour, null si non défini). */

@@ -121,6 +121,7 @@ a { color: inherit; }
 }
 .table-archives th { text-align: left; color: var(--couleur-texte-doux); font-weight: 600; background: var(--couleur-fond); }
 .ligne-inactive { opacity: 0.55; }
+.mention-depart { color: var(--couleur-texte-doux); font-size: 0.8rem; }
 .cellule-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
 .section-employes { margin-bottom: 1.75rem; }
 .section-employes h3 {
@@ -250,6 +251,23 @@ dialog.dialogue::backdrop { background: rgba(20, 18, 15, 0.35); }
   border-color: var(--couleur-accent);
 }
 
+.bloc-retires {
+  margin-top: 1rem;
+  background: var(--couleur-surface);
+  border: 1px solid var(--couleur-bordure);
+  border-radius: var(--rayon-bordure);
+  padding: 0.85rem 1.1rem;
+}
+.bloc-retires h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--couleur-texte-doux);
+}
+.liste-retires { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+.liste-retires li { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; font-size: 0.88rem; }
+
 .grille-planning {
   width: 100%;
   border-collapse: separate;
@@ -282,7 +300,19 @@ dialog.dialogue::backdrop { background: rgba(20, 18, 15, 0.35); }
 }
 .grille-planning td.colonne-employe { background: var(--couleur-surface); font-weight: 500; font-size: 0.9rem; }
 .nom-employe { display: block; }
-.bouton-semaine-type { display: block; margin-top: 0.15rem; }
+.bouton-semaine-type, .bouton-retirer { display: block; margin-top: 0.15rem; }
+.ligne-hors-effectif { opacity: 0.55; }
+.mention-hors-effectif {
+  display: inline-block;
+  margin-left: 0.35rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: var(--couleur-fond);
+  color: var(--couleur-texte-doux);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
 .grille-planning .colonne-total { min-width: 70px; }
 .cellule-jour { padding: 0.3rem; border-bottom: 1px solid var(--couleur-bordure); border-left: 1px solid var(--couleur-bordure); text-align: center; }
 .cellule-bouton {

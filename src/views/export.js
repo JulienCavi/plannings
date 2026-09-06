@@ -3,6 +3,7 @@ import { listerCasesSemaine } from '../db/cases.js';
 import { listerEmployes } from '../db/employes.js';
 import { listerStatuts } from '../db/statuts.js';
 import { joursDeSemaine, formatJourCourt, formatDateCourte, semaineActuelle } from '../utils/semaine.js';
+import { effectifVisible } from '../utils/effectif.js';
 
 export async function afficher(conteneur, params) {
   const { annee, numero } =
@@ -15,8 +16,8 @@ export async function afficher(conteneur, params) {
     listerEmployes(),
     listerStatuts(),
   ]);
-  const employesActifs = tousEmployes.filter((e) => e.actif);
   const cases = semaineExistante ? await listerCasesSemaine(semaineExistante.id) : [];
+  const effectif = effectifVisible(tousEmployes, annee, numero, semaineExistante, cases);
   const statutsParId = new Map(statuts.map((s) => [s.id, s]));
   const jours = joursDeSemaine(annee, numero);
 
@@ -70,32 +71,29 @@ export async function afficher(conteneur, params) {
 
   const casesParCle = new Map(cases.map((c) => [`${c.employeId}-${c.jour}`, c]));
   const corps = document.createElement('tbody');
-  employesActifs
-    .slice()
-    .sort((a, b) => a.prenom.localeCompare(b.prenom))
-    .forEach((employe) => {
-      const ligne = document.createElement('tr');
-      const tdNom = document.createElement('td');
-      tdNom.className = 'nom-export';
-      tdNom.textContent = employe.prenom;
-      ligne.appendChild(tdNom);
+  effectif.forEach(({ employe }) => {
+    const ligne = document.createElement('tr');
+    const tdNom = document.createElement('td');
+    tdNom.className = 'nom-export';
+    tdNom.textContent = employe.prenom;
+    ligne.appendChild(tdNom);
 
-      for (let jour = 0; jour < 7; jour++) {
-        const td = document.createElement('td');
-        const c = casesParCle.get(`${employe.id}-${jour}`);
-        const statut = c && statutsParId.get(c.statutId);
-        if (statut?.compteCommeTravail && c.heureDebut && c.heureFin) {
-          td.appendChild(construireBadge(`${c.heureDebut}–${c.heureFin}`, statut, true));
-        } else if (statut) {
-          td.appendChild(construireBadge(statut.nom, statut, false));
-        } else {
-          td.className = 'case-aucune';
-          td.textContent = '—';
-        }
-        ligne.appendChild(td);
+    for (let jour = 0; jour < 7; jour++) {
+      const td = document.createElement('td');
+      const c = casesParCle.get(`${employe.id}-${jour}`);
+      const statut = c && statutsParId.get(c.statutId);
+      if (statut?.compteCommeTravail && c.heureDebut && c.heureFin) {
+        td.appendChild(construireBadge(`${c.heureDebut}–${c.heureFin}`, statut, true));
+      } else if (statut) {
+        td.appendChild(construireBadge(statut.nom, statut, false));
+      } else {
+        td.className = 'case-aucune';
+        td.textContent = '—';
       }
-      corps.appendChild(ligne);
-    });
+      ligne.appendChild(td);
+    }
+    corps.appendChild(ligne);
+  });
   table.appendChild(corps);
   feuille.appendChild(table);
 

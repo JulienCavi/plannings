@@ -4,6 +4,12 @@ export function listerCasesSemaine(semaineId) {
   return db.cases.where('semaineId').equals(semaineId).toArray();
 }
 
+/** Ensemble des ids d'employés ayant au moins une case en base, tous jours et semaines confondus. */
+export async function listerEmployeIdsAvecCases() {
+  const cases = await db.cases.toArray();
+  return new Set(cases.map((c) => c.employeId));
+}
+
 /** Crée ou met à jour la case d'un employé pour un jour donné (upsert). */
 export async function enregistrerCase(semaineId, employeId, jour, donnees) {
   const existante = await db.cases

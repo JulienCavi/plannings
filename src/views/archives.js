@@ -1,11 +1,17 @@
 import { listerSemainesArchivees, toggleArchiveeSemaine } from '../db/semaines.js';
 import { listerCasesSemaine } from '../db/cases.js';
+import { listerEmployes } from '../db/employes.js';
 import { listerStatuts } from '../db/statuts.js';
 import { joursDeSemaine, formatDateCourte } from '../utils/semaine.js';
 import { totalHeuresEmploye, formatHeures } from '../utils/horaire.js';
+import { effectifVisible } from '../utils/effectif.js';
 
 export async function afficher(conteneur) {
-  const [semaines, statuts] = await Promise.all([listerSemainesArchivees(), listerStatuts()]);
+  const [semaines, tousEmployes, statuts] = await Promise.all([
+    listerSemainesArchivees(),
+    listerEmployes(),
+    listerStatuts(),
+  ]);
   const statutsParId = new Map(statuts.map((s) => [s.id, s]));
 
   const page = document.createElement('div');
@@ -42,9 +48,14 @@ export async function afficher(conteneur) {
   for (const semaine of semaines) {
     const cases = await listerCasesSemaine(semaine.id);
     const jours = joursDeSemaine(semaine.annee, semaine.numeroSemaine);
-    const employeIds = [...new Set(cases.map((c) => c.employeId))];
-    const totalHeures = employeIds.reduce(
-      (total, id) => total + totalHeuresEmploye(cases, id, statutsParId),
+    const idsAvecCases = new Set(cases.map((c) => c.employeId));
+    // Effectif de la semaine = employés visibles ET ayant au moins une case cette semaine-là :
+    // ni les employés en période sans case, ni les cases d'un employé retiré de la semaine.
+    const effectif = effectifVisible(tousEmployes, semaine.annee, semaine.numeroSemaine, semaine, cases).filter(
+      ({ employe }) => idsAvecCases.has(employe.id)
+    );
+    const totalHeures = effectif.reduce(
+      (total, { employe }) => total + totalHeuresEmploye(cases, employe.id, statutsParId),
       0
     );
 
@@ -60,7 +71,7 @@ export async function afficher(conteneur) {
     ligne.appendChild(tdDates);
 
     const tdEffectif = document.createElement('td');
-    tdEffectif.textContent = String(employeIds.length);
+    tdEffectif.textContent = String(effectif.length);
     ligne.appendChild(tdEffectif);
 
     const tdTotal = document.createElement('td');

@@ -2,17 +2,21 @@ import {
   listerEmployes,
   ajouterEmploye,
   modifierEmploye,
-  toggleActifEmploye,
+  marquerEmployeParti,
+  reintegrerEmploye,
   supprimerEmploye,
   definirSemaineType,
 } from '../db/employes.js';
+import { listerEmployeIdsAvecCases } from '../db/cases.js';
 import { listerStatuts } from '../db/statuts.js';
-import { NOMS_JOURS } from '../utils/semaine.js';
+import { NOMS_JOURS, semaineActuelle, semaineVoisine, cleSemaine, depuisCleSemaine } from '../utils/semaine.js';
 
 export async function afficher(conteneur) {
-  const tous = await listerEmployes();
-  const actifs = tous.filter((e) => e.actif);
-  const inactifs = tous.filter((e) => !e.actif);
+  const [tous, idsAvecCases] = await Promise.all([listerEmployes(), listerEmployeIdsAvecCases()]);
+  const { annee, numero } = semaineActuelle();
+  const cleActuelle = cleSemaine(annee, numero);
+  const dansEquipe = tous.filter((e) => e.finCle == null || cleActuelle <= e.finCle);
+  const partis = tous.filter((e) => e.finCle != null && cleActuelle > e.finCle);
 
   const page = document.createElement('div');
   page.className = 'page-employes';
@@ -28,12 +32,12 @@ export async function afficher(conteneur) {
   entete.appendChild(boutonAjouter);
   page.appendChild(entete);
 
-  if (actifs.length === 0 && inactifs.length === 0) {
+  if (dansEquipe.length === 0 && partis.length === 0) {
     page.appendChild(construireEtatVide());
   } else {
-    page.appendChild(construireListe('Actifs', actifs, false));
-    if (inactifs.length > 0) {
-      page.appendChild(construireListe('Inactifs', inactifs, true));
+    page.appendChild(construireListe("Dans l'équipe", dansEquipe, false));
+    if (partis.length > 0) {
+      page.appendChild(construireListe('Partis', partis, true));
     }
   }
 
@@ -49,7 +53,7 @@ export async function afficher(conteneur) {
     return vide;
   }
 
-  function construireListe(titre, liste, inactif) {
+  function construireListe(titre, liste, estParti) {
     const section = document.createElement('section');
     section.className = 'section-employes';
     const h3 = document.createElement('h3');
@@ -60,10 +64,20 @@ export async function afficher(conteneur) {
     table.className = 'table-employes';
     liste.forEach((employe) => {
       const ligne = document.createElement('tr');
-      if (inactif) ligne.classList.add('ligne-inactive');
+      if (estParti) ligne.classList.add('ligne-inactive');
 
       const tdNom = document.createElement('td');
-      tdNom.textContent = `${employe.prenom} ${employe.nom}`;
+      const nom = document.createElement('span');
+      nom.textContent = `${employe.prenom} ${employe.nom}`;
+      tdNom.appendChild(nom);
+      // finCle: 0 est une sentinelle (aucune période de présence), pas une semaine réelle — pas de mention dans ce cas.
+      if (estParti && employe.finCle) {
+        const { annee: a, numero: n } = depuisCleSemaine(employe.finCle);
+        const mention = document.createElement('span');
+        mention.className = 'mention-depart';
+        mention.textContent = ` — dernière semaine dans l'effectif : semaine ${n} — ${a}`;
+        tdNom.appendChild(mention);
+      }
       ligne.appendChild(tdNom);
 
       const tdActions = document.createElement('td');
@@ -86,19 +100,26 @@ export async function afficher(conteneur) {
       const boutonArchiver = document.createElement('button');
       boutonArchiver.type = 'button';
       boutonArchiver.className = 'bouton-icone';
-      boutonArchiver.textContent = inactif ? 'Désarchiver' : 'Archiver';
+      boutonArchiver.textContent = estParti ? 'Réintégrer' : 'Archiver';
       boutonArchiver.addEventListener('click', async () => {
-        await toggleActifEmploye(employe.id, inactif);
+        if (estParti) {
+          await reintegrerEmploye(employe.id);
+        } else {
+          const precedente = semaineVoisine(annee, numero, -1);
+          await marquerEmployeParti(employe.id, cleSemaine(precedente.annee, precedente.numero));
+        }
         rafraichir();
       });
       tdActions.appendChild(boutonArchiver);
 
-      const boutonSupprimer = document.createElement('button');
-      boutonSupprimer.type = 'button';
-      boutonSupprimer.className = 'bouton-icone bouton-danger';
-      boutonSupprimer.textContent = 'Supprimer';
-      boutonSupprimer.addEventListener('click', () => ouvrirDialogueSuppression(employe));
-      tdActions.appendChild(boutonSupprimer);
+      if (!idsAvecCases.has(employe.id)) {
+        const boutonSupprimer = document.createElement('button');
+        boutonSupprimer.type = 'button';
+        boutonSupprimer.className = 'bouton-icone bouton-danger';
+        boutonSupprimer.textContent = 'Supprimer';
+        boutonSupprimer.addEventListener('click', () => ouvrirDialogueSuppression(employe));
+        tdActions.appendChild(boutonSupprimer);
+      }
 
       ligne.appendChild(tdActions);
       table.appendChild(ligne);
@@ -130,7 +151,7 @@ export async function afficher(conteneur) {
       if (estEdition) {
         await modifierEmploye(employe.id, donnees);
       } else {
-        await ajouterEmploye(donnees);
+        await ajouterEmploye({ ...donnees, debutCle: cleActuelle });
       }
       dialogue.close();
       rafraichir();
@@ -144,7 +165,7 @@ export async function afficher(conteneur) {
     dialogue.innerHTML = `
       <div class="formulaire">
         <h3>Supprimer ${champEchappe(employe.prenom)} ${champEchappe(employe.nom)} ?</h3>
-        <p>Cette action supprime aussi toutes ses cases de planning. Elle est irréversible.</p>
+        <p>Cet employé n'a aucune case de planning enregistrée. Cette action est irréversible.</p>
         <div class="dialogue-actions">
           <button type="button" class="bouton" data-annuler>Annuler</button>
           <button type="button" class="bouton bouton-danger" data-confirmer>Supprimer</button>

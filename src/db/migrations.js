@@ -1,12 +1,12 @@
 import { db } from './database.js';
-import { semaineVoisine } from '../utils/semaine.js';
+import { semaineVoisine, cleSemaine } from '../utils/semaine.js';
 
 const CLE_MIGRATION_HERITEE = 'planning_manager_migration_dimanche_v1';
 const CLE_MIGRATION_SEMAINE_TYPE_HERITEE = 'planning_manager_migration_dimanche_semaine_type_v1';
 const TABLES = ['employes', 'statuts', 'semaines', 'cases'];
 
 /** Version courante du format de données (voir table des versions dans PLANNING-MANAGER-V4.md). */
-export const VERSION_COURANTE = 3;
+export const VERSION_COURANTE = 4;
 
 /**
  * v1 → v2 : la semaine passe d'un découpage lundi→dimanche à dimanche→samedi. Les
@@ -75,7 +75,47 @@ export function migrer2vers3(donnees) {
   return { ...donnees, employes, semaines, cases };
 }
 
-const MIGRATIONS = { 1: migrer1vers2, 2: migrer2vers3 };
+/**
+ * v3 → v4 : l'effectif devient une propriété de la semaine plutôt qu'un filtre global sur
+ * `employes.actif`. Les employés actifs (`actif === true`, et par défensivité tout employé dont
+ * `actif` n'est pas explicitement `false`) reçoivent `debutCle: null, finCle: null` — ils
+ * étaient déjà là avant ce mécanisme, leur historique doit rester visible sur toutes les
+ * semaines passées. Les employés inactifs (`actif === false`) reçoivent `debutCle: null` et
+ * `finCle` = clé de la dernière semaine où ils ont au moins une case ; s'ils n'en ont aucune,
+ * `finCle: 0` (sentinelle : aucune période de présence, cohérent puisqu'ils n'ont jamais rien
+ * fait — voir `depuisCleSemaine`, à ne jamais appeler sur cette valeur). Le champ `actif`
+ * disparaît. Chaque semaine reçoit `retires: []` et `ajoutes: []`.
+ *
+ * Fonction pure : le calcul de `finCle` lit uniquement `cases` et `semaines` du jeu de données
+ * reçu en paramètre, jamais la base — les migrations ne font aucun accès Dexie.
+ */
+export function migrer3vers4(donnees) {
+  const semainesParId = new Map(donnees.semaines.map((s) => [s.id, s]));
+
+  const employes = donnees.employes.map((e) => {
+    const { actif, ...reste } = e;
+    if (actif === false) {
+      const clesPresence = donnees.cases
+        .filter((c) => c.employeId === e.id)
+        .map((c) => semainesParId.get(c.semaineId))
+        .filter(Boolean)
+        .map((s) => cleSemaine(s.annee, s.numeroSemaine));
+      const finCle = clesPresence.length > 0 ? Math.max(...clesPresence) : 0;
+      return { ...reste, debutCle: null, finCle };
+    }
+    return { ...reste, debutCle: null, finCle: null };
+  });
+
+  const semaines = donnees.semaines.map((s) => ({
+    ...s,
+    retires: s.retires ?? [],
+    ajoutes: s.ajoutes ?? [],
+  }));
+
+  return { ...donnees, employes, semaines };
+}
+
+const MIGRATIONS = { 1: migrer1vers2, 2: migrer2vers3, 3: migrer3vers4 };
 
 /** Chaîne les migrations pures nécessaires pour amener `donnees` à `VERSION_COURANTE`. */
 export function migrerDonnees(donnees, versionDepart) {

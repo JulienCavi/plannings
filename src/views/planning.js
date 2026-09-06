@@ -4,6 +4,9 @@ import {
   toggleArchiveeSemaine,
   listerSemainesRenseignees,
   enregistrerNotes,
+  retirerEmployeSemaine,
+  reintegrerEmployeSemaine,
+  ajouterEmployeSemaine,
 } from '../db/semaines.js';
 import { listerCasesSemaine, enregistrerCase, supprimerCase, dupliquerSemaine } from '../db/cases.js';
 import { listerEmployes } from '../db/employes.js';
@@ -16,6 +19,7 @@ import {
   formatDateCourte,
 } from '../utils/semaine.js';
 import { totalHeuresEmploye, formatHeures } from '../utils/horaire.js';
+import { effectifVisible } from '../utils/effectif.js';
 
 const CRENEAUX_RAPIDES = [
   { debut: '06:00', fin: '13:00' },
@@ -53,11 +57,20 @@ async function dessiner(conteneur, annee, numero) {
     listerStatuts(),
     semaine.id ? listerCasesSemaine(semaine.id) : Promise.resolve([]),
   ]);
-  const employesActifs = tousEmployes.filter((e) => e.actif).sort((a, b) => a.prenom.localeCompare(b.prenom));
   const statutsParId = new Map(statuts.map((s) => [s.id, s]));
   const jours = joursDeSemaine(annee, numero);
 
-  const ctx = { conteneur, annee, numero, semaine, employesActifs, statuts, statutsParId, cases, jours };
+  const effectif = effectifVisible(tousEmployes, annee, numero, semaineExistante, cases);
+  const idsVisibles = new Set(effectif.map((e) => e.employe.id));
+  const idsRetires = new Set(semaineExistante?.retires ?? []);
+  const retiresAffiches = tousEmployes
+    .filter((e) => idsRetires.has(e.id))
+    .sort((a, b) => a.prenom.localeCompare(b.prenom));
+  const candidatsAjout = tousEmployes
+    .filter((e) => !idsVisibles.has(e.id) && !idsRetires.has(e.id))
+    .sort((a, b) => a.prenom.localeCompare(b.prenom));
+
+  const ctx = { conteneur, annee, numero, semaine, effectif, retiresAffiches, candidatsAjout, statuts, statutsParId, cases, jours };
   ctx.rafraichir = () => dessiner(conteneur, annee, numero);
   /** Crée la ligne "semaine" en base si elle n'existe pas encore. À appeler avant tout vrai écrit. */
   ctx.assurerSemaineId = async () => {
@@ -77,6 +90,7 @@ async function dessiner(conteneur, annee, numero) {
   }
 
   page.appendChild(construireGrille(ctx));
+  page.appendChild(construireBlocRetires(ctx));
   page.appendChild(construireBlocNotes(ctx));
   conteneur.appendChild(page);
 }
@@ -100,6 +114,44 @@ function construireBlocNotes(ctx) {
     await enregistrerNotes(id, zone.value);
   });
   bloc.appendChild(zone);
+
+  return bloc;
+}
+
+function construireBlocRetires(ctx) {
+  const { retiresAffiches, semaine } = ctx;
+  if (retiresAffiches.length === 0) return document.createDocumentFragment();
+
+  const bloc = document.createElement('div');
+  bloc.className = 'bloc-retires';
+
+  const titre = document.createElement('h3');
+  titre.textContent = 'Retirés de cette semaine';
+  bloc.appendChild(titre);
+
+  const liste = document.createElement('ul');
+  liste.className = 'liste-retires';
+  retiresAffiches.forEach((employe) => {
+    const item = document.createElement('li');
+    const nom = document.createElement('span');
+    nom.textContent = `${employe.prenom} ${employe.nom}`;
+    item.appendChild(nom);
+
+    if (!semaine.archivee) {
+      const boutonReintegrer = document.createElement('button');
+      boutonReintegrer.type = 'button';
+      boutonReintegrer.className = 'bouton-lien';
+      boutonReintegrer.textContent = 'Réintégrer';
+      boutonReintegrer.addEventListener('click', async () => {
+        await reintegrerEmployeSemaine(semaine.id, employe.id);
+        ctx.rafraichir();
+      });
+      item.appendChild(boutonReintegrer);
+    }
+
+    liste.appendChild(item);
+  });
+  bloc.appendChild(liste);
 
   return bloc;
 }
@@ -131,6 +183,14 @@ function construireEntete(ctx) {
 
   const actions = document.createElement('div');
   actions.className = 'actions-semaine';
+
+  const boutonAjouter = document.createElement('button');
+  boutonAjouter.type = 'button';
+  boutonAjouter.className = 'bouton';
+  boutonAjouter.textContent = 'Ajouter à la semaine';
+  boutonAjouter.disabled = semaine.archivee;
+  boutonAjouter.addEventListener('click', () => ouvrirDialogueAjouter(ctx));
+  actions.appendChild(boutonAjouter);
 
   const boutonDupliquer = document.createElement('button');
   boutonDupliquer.type = 'button';
@@ -201,13 +261,13 @@ function construireBanniereVide(ctx) {
 }
 
 function construireGrille(ctx) {
-  const { employesActifs, jours, semaine, cases, statutsParId } = ctx;
+  const { effectif, jours, semaine, cases, statutsParId } = ctx;
 
-  if (employesActifs.length === 0) {
+  if (effectif.length === 0) {
     const vide = document.createElement('div');
     vide.className = 'etat-vide';
     vide.innerHTML = `
-      <p>Aucun employé actif.</p>
+      <p>Aucun employé visible sur cette semaine.</p>
       <p class="etat-vide-sous-texte"><a href="#/employes">Ajoutez des employés</a> pour commencer à planifier.</p>
     `;
     return vide;
@@ -237,8 +297,10 @@ function construireGrille(ctx) {
   table.appendChild(thead);
 
   const corps = document.createElement('tbody');
-  employesActifs.forEach((employe) => {
+  effectif.forEach(({ employe, horsEffectif }) => {
     const ligne = document.createElement('tr');
+    if (horsEffectif) ligne.classList.add('ligne-hors-effectif');
+
     const tdEmploye = document.createElement('td');
     tdEmploye.className = 'colonne-employe';
 
@@ -247,14 +309,30 @@ function construireGrille(ctx) {
     nomEmploye.textContent = `${employe.prenom} ${employe.nom}`;
     tdEmploye.appendChild(nomEmploye);
 
-    const aSemaineType = Array.isArray(employe.semaineType) && employe.semaineType.some(Boolean);
-    if (aSemaineType && !semaine.archivee) {
-      const boutonSemaineType = document.createElement('button');
-      boutonSemaineType.type = 'button';
-      boutonSemaineType.className = 'bouton-lien bouton-semaine-type';
-      boutonSemaineType.textContent = 'Semaine type';
-      boutonSemaineType.addEventListener('click', () => appliquerSemaineType(ctx, employe));
-      tdEmploye.appendChild(boutonSemaineType);
+    if (horsEffectif) {
+      const mention = document.createElement('span');
+      mention.className = 'mention-hors-effectif';
+      mention.textContent = 'parti';
+      tdEmploye.appendChild(mention);
+    }
+
+    if (!semaine.archivee) {
+      const aSemaineType = Array.isArray(employe.semaineType) && employe.semaineType.some(Boolean);
+      if (aSemaineType) {
+        const boutonSemaineType = document.createElement('button');
+        boutonSemaineType.type = 'button';
+        boutonSemaineType.className = 'bouton-lien bouton-semaine-type';
+        boutonSemaineType.textContent = 'Semaine type';
+        boutonSemaineType.addEventListener('click', () => appliquerSemaineType(ctx, employe));
+        tdEmploye.appendChild(boutonSemaineType);
+      }
+
+      const boutonRetirer = document.createElement('button');
+      boutonRetirer.type = 'button';
+      boutonRetirer.className = 'bouton-lien bouton-retirer';
+      boutonRetirer.textContent = 'Retirer de cette semaine';
+      boutonRetirer.addEventListener('click', () => retirerDeLaSemaine(ctx, employe));
+      tdEmploye.appendChild(boutonRetirer);
     }
 
     ligne.appendChild(tdEmploye);
@@ -310,6 +388,54 @@ function construireCelluleJour(ctx, employe, jour, caseActuelle) {
 
   td.appendChild(bouton);
   return td;
+}
+
+/** Retire l'employé de l'effectif de la semaine affichée. Confirme si des horaires seraient masqués. */
+async function retirerDeLaSemaine(ctx, employe) {
+  const executer = async () => {
+    const id = await ctx.assurerSemaineId();
+    await retirerEmployeSemaine(id, employe.id);
+    ctx.rafraichir();
+  };
+  const aDesCasesCetteSemaine = ctx.cases.some((c) => c.employeId === employe.id);
+  if (aDesCasesCetteSemaine) {
+    ouvrirDialogueConfirmationRetrait(employe, executer);
+  } else {
+    await executer();
+  }
+}
+
+function ouvrirDialogueConfirmationRetrait(employe, executer) {
+  const dialogue = document.createElement('dialog');
+  dialogue.className = 'dialogue';
+  const p = document.createElement('div');
+  p.className = 'formulaire';
+  const titre = document.createElement('h3');
+  titre.textContent = `Retirer ${employe.prenom} de cette semaine ?`;
+  const texte = document.createElement('p');
+  texte.textContent =
+    'Ses horaires déjà saisis cette semaine sont conservés, pas supprimés : ils réapparaîtront si vous le réintégrez.';
+  const actions = document.createElement('div');
+  actions.className = 'dialogue-actions';
+  const boutonAnnuler = document.createElement('button');
+  boutonAnnuler.type = 'button';
+  boutonAnnuler.className = 'bouton';
+  boutonAnnuler.textContent = 'Annuler';
+  boutonAnnuler.addEventListener('click', () => dialogue.close());
+  const boutonConfirmer = document.createElement('button');
+  boutonConfirmer.type = 'button';
+  boutonConfirmer.className = 'bouton bouton-danger';
+  boutonConfirmer.textContent = 'Retirer';
+  boutonConfirmer.addEventListener('click', async () => {
+    dialogue.close();
+    await executer();
+  });
+  actions.append(boutonAnnuler, boutonConfirmer);
+  p.append(titre, texte, actions);
+  dialogue.appendChild(p);
+  document.body.appendChild(dialogue);
+  dialogue.addEventListener('close', () => dialogue.remove());
+  dialogue.showModal();
 }
 
 /** Applique la semaine type de l'employé aux jours définis de la semaine affichée. */
@@ -540,7 +666,7 @@ function ouvrirPopover(bouton, ctx, employe, jour, caseActuelle) {
 }
 
 async function ouvrirDialogueDupliquer(ctx) {
-  const { semaine, annee, numero, employesActifs } = ctx;
+  const { semaine, annee, numero, effectif } = ctx;
   const semainesRenseignees = (await listerSemainesRenseignees()).filter((s) => s.id !== semaine.id);
   const precedente = semaineVoisine(annee, numero, -1);
   const idParDefaut =
@@ -591,12 +717,13 @@ async function ouvrirDialogueDupliquer(ctx) {
   dialogue.addEventListener('close', () => dialogue.remove());
   dialogue.querySelector('form').addEventListener('submit', async (evt) => {
     const sourceId = Number(new FormData(evt.target).get('source'));
+    const employeIds = effectif.map((e) => e.employe.id);
     if (ctx.cases.length > 0) {
       dialogue.close();
-      ouvrirDialogueConfirmationEcrasement(ctx, sourceId);
+      ouvrirDialogueConfirmationEcrasement(ctx, sourceId, employeIds);
     } else {
       const cibleId = await ctx.assurerSemaineId();
-      await dupliquerSemaine(sourceId, cibleId, employesActifs.map((e) => e.id));
+      await dupliquerSemaine(sourceId, cibleId, employeIds);
       dialogue.close();
       ctx.rafraichir();
     }
@@ -604,15 +731,14 @@ async function ouvrirDialogueDupliquer(ctx) {
   dialogue.showModal();
 }
 
-function ouvrirDialogueConfirmationEcrasement(ctx, sourceId) {
-  const { employesActifs } = ctx;
+function ouvrirDialogueConfirmationEcrasement(ctx, sourceId, employeIds) {
   const dialogue = document.createElement('dialog');
   dialogue.className = 'dialogue';
   dialogue.innerHTML = `
     <div class="formulaire">
       <h3>Écraser la semaine actuelle ?</h3>
-      <p>Cette semaine contient déjà des données. Les cases existantes des employés actifs
-      seront supprimées puis remplacées par celles de la semaine source. Continuer ?</p>
+      <p>Cette semaine contient déjà des données. Les cases existantes des employés de cette
+      semaine seront supprimées puis remplacées par celles de la semaine source. Continuer ?</p>
       <div class="dialogue-actions">
         <button type="button" class="bouton" data-annuler>Annuler</button>
         <button type="button" class="bouton bouton-danger" data-confirmer>Écraser et dupliquer</button>
@@ -624,7 +750,85 @@ function ouvrirDialogueConfirmationEcrasement(ctx, sourceId) {
   dialogue.addEventListener('close', () => dialogue.remove());
   dialogue.querySelector('[data-confirmer]').addEventListener('click', async () => {
     const cibleId = await ctx.assurerSemaineId();
-    await dupliquerSemaine(sourceId, cibleId, employesActifs.map((e) => e.id));
+    await dupliquerSemaine(sourceId, cibleId, employeIds);
+    dialogue.close();
+    ctx.rafraichir();
+  });
+  dialogue.showModal();
+}
+
+/** Dialogue de rattrapage rétroactif : ajoute un employé non visible (nouvelle recrue, parti oublié) à la semaine affichée. */
+async function ouvrirDialogueAjouter(ctx) {
+  const { candidatsAjout, annee, numero } = ctx;
+  const dialogue = document.createElement('dialog');
+  dialogue.className = 'dialogue';
+  const bloc = document.createElement('div');
+  bloc.className = 'formulaire';
+
+  const titre = document.createElement('h3');
+  titre.textContent = `Ajouter un employé à la semaine ${numero} — ${annee}`;
+  bloc.appendChild(titre);
+
+  if (candidatsAjout.length === 0) {
+    const texte = document.createElement('p');
+    texte.textContent = 'Tout le monde figure déjà sur cette semaine.';
+    bloc.appendChild(texte);
+
+    const actions = document.createElement('div');
+    actions.className = 'dialogue-actions';
+    const boutonFermer = document.createElement('button');
+    boutonFermer.type = 'button';
+    boutonFermer.className = 'bouton';
+    boutonFermer.textContent = 'Fermer';
+    boutonFermer.addEventListener('click', () => dialogue.close());
+    actions.appendChild(boutonFermer);
+    bloc.appendChild(actions);
+
+    dialogue.appendChild(bloc);
+    document.body.appendChild(dialogue);
+    dialogue.addEventListener('close', () => dialogue.remove());
+    dialogue.showModal();
+    return;
+  }
+
+  const form = document.createElement('form');
+  form.method = 'dialog';
+
+  const label = document.createElement('label');
+  label.textContent = 'Employé';
+  const select = document.createElement('select');
+  select.name = 'employeId';
+  candidatsAjout.forEach((e) => {
+    const option = document.createElement('option');
+    option.value = String(e.id);
+    option.textContent = `${e.prenom} ${e.nom}`;
+    select.appendChild(option);
+  });
+  label.appendChild(select);
+  form.appendChild(label);
+
+  const actions = document.createElement('div');
+  actions.className = 'dialogue-actions';
+  const boutonAnnuler = document.createElement('button');
+  boutonAnnuler.type = 'button';
+  boutonAnnuler.className = 'bouton';
+  boutonAnnuler.textContent = 'Annuler';
+  boutonAnnuler.addEventListener('click', () => dialogue.close());
+  const boutonConfirmer = document.createElement('button');
+  boutonConfirmer.type = 'submit';
+  boutonConfirmer.className = 'bouton bouton-accent';
+  boutonConfirmer.textContent = 'Ajouter';
+  actions.append(boutonAnnuler, boutonConfirmer);
+  form.appendChild(actions);
+  bloc.appendChild(form);
+
+  dialogue.appendChild(bloc);
+  document.body.appendChild(dialogue);
+  dialogue.addEventListener('close', () => dialogue.remove());
+  form.addEventListener('submit', async (evt) => {
+    const employeId = Number(new FormData(evt.target).get('employeId'));
+    const id = await ctx.assurerSemaineId();
+    await ajouterEmployeSemaine(id, employeId);
     dialogue.close();
     ctx.rafraichir();
   });
