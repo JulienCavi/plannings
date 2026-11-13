@@ -1,85 +1,113 @@
-import { exporterDonnees, importerDonnees } from '../db/backup.js';
+import { exporterDonnees, importerDonnees, baseContientDesDonnees } from '../db/backup.js';
+import { lireMeta, ecrireMeta } from '../db/meta.js';
+import { telechargerJSON, horodatageFichier } from '../utils/telechargement.js';
+import { el, bouton } from '../ui/dom.js';
+import { confirmer } from '../ui/dialogue.js';
+
+/** « aujourd'hui à 16:47 », « hier », « il y a 12 jours (le 01/11/2026) ». */
+function formatAnciennete(dateISO) {
+  const date = new Date(dateISO);
+  const minuit = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const jours = Math.round((minuit(new Date()) - minuit(date)) / 86400000);
+  if (jours <= 0) return `aujourd’hui à ${date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
+  if (jours === 1) return 'hier';
+  return `il y a ${jours} jours (le ${date.toLocaleDateString('fr-FR')})`;
+}
 
 export async function afficher(conteneur) {
-  const page = document.createElement('div');
-  page.className = 'page-reglages';
-  page.innerHTML = `
-    <div class="entete-page"><h2>Réglages</h2></div>
-    <section class="bloc-sauvegarde">
-      <h3>Sauvegarde</h3>
-      <p>L'ensemble des données (employés, semaines, planning) est stocké uniquement sur cet
-      ordinateur. Exportez régulièrement un fichier de sauvegarde.</p>
-      <div class="dialogue-actions">
-        <button type="button" class="bouton bouton-accent" data-exporter>Exporter les données</button>
-        <button type="button" class="bouton" data-importer>Importer un fichier</button>
-        <input type="file" accept="application/json" data-fichier hidden />
-      </div>
-      <p class="message-statut" data-message></p>
-    </section>
-  `;
-  conteneur.appendChild(page);
+  const [dernierExport, protege] = await Promise.all([lireMeta('dernierExport'), navigator.storage?.persisted?.() ?? false]);
 
-  const message = page.querySelector('[data-message]');
-  const champFichier = page.querySelector('[data-fichier]');
+  const etatExport = el('p', { class: 'aide' });
+  const majEtatExport = (dateISO) => {
+    etatExport.textContent = dateISO
+      ? `Dernier export depuis ce navigateur : ${formatAnciennete(dateISO)}.`
+      : 'Aucun export enregistré depuis ce navigateur.';
+  };
+  majEtatExport(dernierExport);
 
-  page.querySelector('[data-exporter]').addEventListener('click', async () => {
+  const message = el('p', { class: 'message-statut', role: 'status' });
+  const afficherMessage = (texte, estErreur = false) => {
+    message.textContent = texte;
+    message.classList.toggle('message-statut-erreur', estErreur);
+  };
+
+  const champFichier = el('input', { type: 'file', accept: 'application/json,.json', hidden: true });
+
+  async function exporter() {
     const donnees = await exporterDonnees();
-    const blob = new Blob([JSON.stringify(donnees, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const lien = document.createElement('a');
-    const horodatage = new Date().toISOString().slice(0, 10);
-    lien.href = url;
-    lien.download = `planning-manager-${horodatage}.json`;
-    lien.click();
-    URL.revokeObjectURL(url);
-    afficherMessage('Export téléchargé.', false);
-  });
+    telechargerJSON(`planning-manager-${horodatageFichier()}.json`, donnees);
+    await ecrireMeta('dernierExport', donnees.exporteLe);
+    majEtatExport(donnees.exporteLe);
+    document.dispatchEvent(new CustomEvent('etat-sauvegarde-change'));
+    afficherMessage('Export téléchargé. Rangez le fichier hors du dossier du site.');
+  }
 
-  page.querySelector('[data-importer]').addEventListener('click', () => {
-    champFichier.value = '';
-    champFichier.click();
-  });
+  async function importer(fichier) {
+    let donnees;
+    try {
+      donnees = JSON.parse(await fichier.text());
+    } catch {
+      afficherMessage('Échec de l’import : ce fichier n’est pas un export JSON lisible.', true);
+      return;
+    }
+    const aDesDonnees = await baseContientDesDonnees();
+    const ok = await confirmer({
+      titre: 'Remplacer toutes les données ?',
+      texte: aDesDonnees
+        ? `L’import de « ${fichier.name} » remplace intégralement les données actuelles (employés, semaines, planning). Une copie de l’état actuel est d’abord téléchargée, par sécurité.`
+        : `Importer « ${fichier.name} » dans l’application ?`,
+      libelle: aDesDonnees ? 'Sauvegarder puis remplacer' : 'Importer',
+      danger: aDesDonnees,
+    });
+    if (!ok) return;
+    try {
+      if (aDesDonnees) telechargerJSON(`planning-manager-avant-import-${horodatageFichier()}.json`, await exporterDonnees());
+      await importerDonnees(donnees);
+      document.dispatchEvent(new CustomEvent('etat-sauvegarde-change'));
+      afficherMessage('Import réussi. Les données ont été remplacées.');
+    } catch (erreur) {
+      afficherMessage(`Échec de l’import : ${erreur.message} Les données actuelles n’ont pas été modifiées.`, true);
+    }
+  }
 
   champFichier.addEventListener('change', () => {
     const fichier = champFichier.files[0];
-    if (!fichier) return;
-    ouvrirDialogueConfirmationImport(fichier);
+    if (fichier) importer(fichier);
   });
 
-  function ouvrirDialogueConfirmationImport(fichier) {
-    const dialogue = document.createElement('dialog');
-    dialogue.className = 'dialogue';
-    dialogue.innerHTML = `
-      <div class="formulaire">
-        <h3>Remplacer toutes les données ?</h3>
-        <p>L'import de « <span data-nom-fichier></span> » va effacer et remplacer intégralement
-        les données actuelles (employés, semaines, planning). Cette action est irréversible.</p>
-        <div class="dialogue-actions">
-          <button type="button" class="bouton" data-annuler>Annuler</button>
-          <button type="button" class="bouton bouton-danger" data-confirmer>Remplacer</button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(dialogue);
-    dialogue.querySelector('[data-nom-fichier]').textContent = fichier.name;
-    dialogue.querySelector('[data-annuler]').addEventListener('click', () => dialogue.close());
-    dialogue.addEventListener('close', () => dialogue.remove());
-    dialogue.querySelector('[data-confirmer]').addEventListener('click', async () => {
-      dialogue.close();
-      try {
-        const texte = await fichier.text();
-        const donnees = JSON.parse(texte);
-        await importerDonnees(donnees);
-        afficherMessage('Import réussi. Les données ont été remplacées.', false);
-      } catch (erreur) {
-        afficherMessage(`Échec de l'import : ${erreur.message}`, true);
-      }
-    });
-    dialogue.showModal();
-  }
-
-  function afficherMessage(texte, estErreur) {
-    message.textContent = texte;
-    message.classList.toggle('message-erreur', estErreur);
-  }
+  conteneur.replaceChildren(
+    el(
+      'div',
+      { class: 'page-reglages' },
+      el('header', { class: 'entete-page' }, el('h1', { text: 'Réglages' })),
+      el(
+        'section',
+        { class: 'bloc bloc-sauvegarde' },
+        el('h2', { text: 'Sauvegarde' }),
+        el('p', {
+          text: 'Toutes les données (employés, semaines, planning) vivent uniquement dans ce navigateur, sur cet ordinateur. Le fichier d’export est votre seule sauvegarde : exportez régulièrement.',
+        }),
+        etatExport,
+        el(
+          'div',
+          { class: 'rangee-boutons' },
+          bouton('Exporter les données', { variante: 'accent', on: exporter }),
+          bouton('Importer un fichier…', {
+            on: () => {
+              champFichier.value = '';
+              champFichier.click();
+            },
+          }),
+          champFichier
+        ),
+        message,
+        el('p', {
+          class: 'aide',
+          text: protege
+            ? 'Le navigateur protège ces données contre son nettoyage automatique.'
+            : 'Le navigateur peut effacer ces données s’il manque de place ou si vous videz les données de navigation : raison de plus pour exporter.',
+        })
+      )
+    )
+  );
 }

@@ -2,106 +2,90 @@ import { listerSemainesArchivees, toggleArchiveeSemaine } from '../db/semaines.j
 import { listerCasesSemaine } from '../db/cases.js';
 import { listerEmployes } from '../db/employes.js';
 import { listerStatuts } from '../db/statuts.js';
-import { joursDeSemaine, formatDateCourte } from '../utils/semaine.js';
+import { joursDeSemaine, formatPeriode } from '../utils/semaine.js';
 import { totalHeuresEmploye, formatHeures } from '../utils/horaire.js';
 import { effectifVisible } from '../utils/effectif.js';
+import { el } from '../ui/dom.js';
 
 export async function afficher(conteneur) {
-  const [semaines, tousEmployes, statuts] = await Promise.all([
-    listerSemainesArchivees(),
-    listerEmployes(),
-    listerStatuts(),
-  ]);
+  const [semaines, tousEmployes, statuts] = await Promise.all([listerSemainesArchivees(), listerEmployes(), listerStatuts()]);
   const statutsParId = new Map(statuts.map((s) => [s.id, s]));
+  const casesParSemaine = await Promise.all(semaines.map((s) => listerCasesSemaine(s.id)));
 
-  const page = document.createElement('div');
-  page.className = 'page-archives';
-  page.innerHTML = '<div class="entete-page"><h2>Archives</h2></div>';
+  const page = el('div', { class: 'page-archives' }, el('header', { class: 'entete-page' }, el('h1', { text: 'Archives' })));
 
   if (semaines.length === 0) {
-    const vide = document.createElement('div');
-    vide.className = 'etat-vide';
-    vide.innerHTML = `
-      <p>Aucune semaine archivée pour l'instant.</p>
-      <p class="etat-vide-sous-texte">Archivez une semaine terminée depuis l'écran Planning pour la retrouver ici.</p>
-    `;
-    page.appendChild(vide);
-    conteneur.appendChild(page);
+    page.append(
+      el(
+        'div',
+        { class: 'etat-vide' },
+        el('p', { text: 'Aucune semaine archivée pour l’instant.' }),
+        el('p', {
+          class: 'etat-vide-sous-texte',
+          text: 'Archiver une semaine terminée la passe en lecture seule. Cela se fait depuis le menu « ⋯ » de l’écran Planning.',
+        })
+      )
+    );
+    conteneur.replaceChildren(page);
     return;
   }
 
-  const table = document.createElement('table');
-  table.className = 'table-archives';
-  table.innerHTML = `
-    <thead>
-      <tr>
-        <th>Semaine</th>
-        <th>Dates</th>
-        <th>Effectif</th>
-        <th>Total heures</th>
-        <th></th>
-      </tr>
-    </thead>
-  `;
-  const corps = document.createElement('tbody');
-
-  for (const semaine of semaines) {
-    const cases = await listerCasesSemaine(semaine.id);
+  const lignes = semaines.map((semaine, i) => {
+    const cases = casesParSemaine[i];
     const jours = joursDeSemaine(semaine.annee, semaine.numeroSemaine);
     const idsAvecCases = new Set(cases.map((c) => c.employeId));
     // Effectif de la semaine = employés visibles ET ayant au moins une case cette semaine-là :
     // ni les employés en période sans case, ni les cases d'un employé retiré de la semaine.
-    const effectif = effectifVisible(tousEmployes, semaine.annee, semaine.numeroSemaine, semaine, cases).filter(
-      ({ employe }) => idsAvecCases.has(employe.id)
+    const effectif = effectifVisible(tousEmployes, semaine.annee, semaine.numeroSemaine, semaine, cases).filter(({ employe }) =>
+      idsAvecCases.has(employe.id)
     );
-    const totalHeures = effectif.reduce(
-      (total, { employe }) => total + totalHeuresEmploye(cases, employe.id, statutsParId),
-      0
+    const totalHeures = effectif.reduce((total, { employe }) => total + totalHeuresEmploye(cases, employe.id, statutsParId), 0);
+    const lien = `#/planning?annee=${semaine.annee}&semaine=${semaine.numeroSemaine}`;
+
+    return el(
+      'tr',
+      {},
+      el('td', {}, el('a', { class: 'lien-semaine', href: lien, text: `Semaine ${semaine.numeroSemaine}` })),
+      el('td', { text: formatPeriode(jours[0], jours[6]) }),
+      el('td', { class: 'nombre', text: String(effectif.length) }),
+      el('td', { class: 'nombre', text: formatHeures(totalHeures) }),
+      el(
+        'td',
+        { class: 'cellule-actions' },
+        el('button', {
+          type: 'button',
+          class: 'bouton-texte',
+          text: 'Désarchiver',
+          on: {
+            click: async () => {
+              await toggleArchiveeSemaine(semaine.id, false);
+              afficher(conteneur);
+            },
+          },
+        })
+      )
     );
+  });
 
-    const ligne = document.createElement('tr');
-    ligne.className = 'ligne-cliquable';
-
-    const tdSemaine = document.createElement('td');
-    tdSemaine.textContent = `Semaine ${semaine.numeroSemaine} — ${semaine.annee}`;
-    ligne.appendChild(tdSemaine);
-
-    const tdDates = document.createElement('td');
-    tdDates.textContent = `${formatDateCourte(jours[0])} – ${formatDateCourte(jours[6])}`;
-    ligne.appendChild(tdDates);
-
-    const tdEffectif = document.createElement('td');
-    tdEffectif.textContent = String(effectif.length);
-    ligne.appendChild(tdEffectif);
-
-    const tdTotal = document.createElement('td');
-    tdTotal.className = 'chiffre';
-    tdTotal.textContent = formatHeures(totalHeures);
-    ligne.appendChild(tdTotal);
-
-    const tdActions = document.createElement('td');
-    tdActions.className = 'cellule-actions';
-    const boutonDesarchiver = document.createElement('button');
-    boutonDesarchiver.type = 'button';
-    boutonDesarchiver.className = 'bouton-icone';
-    boutonDesarchiver.textContent = 'Désarchiver';
-    boutonDesarchiver.addEventListener('click', async (evt) => {
-      evt.stopPropagation();
-      await toggleArchiveeSemaine(semaine.id, false);
-      conteneur.innerHTML = '';
-      afficher(conteneur);
-    });
-    tdActions.appendChild(boutonDesarchiver);
-    ligne.appendChild(tdActions);
-
-    ligne.addEventListener('click', () => {
-      location.hash = `#/planning?annee=${semaine.annee}&semaine=${semaine.numeroSemaine}`;
-    });
-
-    corps.appendChild(ligne);
-  }
-
-  table.appendChild(corps);
-  page.appendChild(table);
-  conteneur.appendChild(page);
+  page.append(
+    el(
+      'table',
+      { class: 'table-liste table-archives' },
+      el(
+        'thead',
+        {},
+        el(
+          'tr',
+          {},
+          el('th', { scope: 'col', text: 'Semaine' }),
+          el('th', { scope: 'col', text: 'Dates' }),
+          el('th', { scope: 'col', class: 'nombre', text: 'Personnes' }),
+          el('th', { scope: 'col', class: 'nombre', text: 'Heures' }),
+          el('th', { scope: 'col' })
+        )
+      ),
+      el('tbody', {}, lignes)
+    )
+  );
+  conteneur.replaceChildren(page);
 }

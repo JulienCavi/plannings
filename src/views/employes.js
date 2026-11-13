@@ -10,312 +10,273 @@ import {
 import { listerEmployeIdsAvecCases } from '../db/cases.js';
 import { listerStatuts } from '../db/statuts.js';
 import { NOMS_JOURS, semaineActuelle, semaineVoisine, cleSemaine, depuisCleSemaine } from '../utils/semaine.js';
+import { analyserHeure, dureeHeures, formatHeures } from '../utils/horaire.js';
+import { el, bouton } from '../ui/dom.js';
+import { ouvrirDialogue, ligneActions, confirmer } from '../ui/dialogue.js';
+import { notifier } from '../ui/toast.js';
+
+const nomComplet = (employe) => `${employe.prenom} ${employe.nom}`.trim();
 
 export async function afficher(conteneur) {
-  const [tous, idsAvecCases] = await Promise.all([listerEmployes(), listerEmployeIdsAvecCases()]);
+  const [tous, idsAvecCases, statuts] = await Promise.all([listerEmployes(), listerEmployeIdsAvecCases(), listerStatuts()]);
+  const statutsParId = new Map(statuts.map((s) => [s.id, s]));
   const { annee, numero } = semaineActuelle();
   const cleActuelle = cleSemaine(annee, numero);
   const dansEquipe = tous.filter((e) => e.finCle == null || cleActuelle <= e.finCle);
   const partis = tous.filter((e) => e.finCle != null && cleActuelle > e.finCle);
+  const rafraichir = () => afficher(conteneur);
 
-  const page = document.createElement('div');
-  page.className = 'page-employes';
+  const page = el(
+    'div',
+    { class: 'page-employes' },
+    el(
+      'header',
+      { class: 'entete-page' },
+      el('h1', { text: 'Employés' }),
+      bouton('Ajouter un employé', { variante: 'accent', on: () => ouvrirDialogueEmploye() })
+    )
+  );
 
-  const entete = document.createElement('div');
-  entete.className = 'entete-page';
-  entete.innerHTML = '<h2>Employés</h2>';
-  const boutonAjouter = document.createElement('button');
-  boutonAjouter.type = 'button';
-  boutonAjouter.className = 'bouton bouton-accent';
-  boutonAjouter.textContent = 'Ajouter un employé';
-  boutonAjouter.addEventListener('click', () => ouvrirDialogueEmploye());
-  entete.appendChild(boutonAjouter);
-  page.appendChild(entete);
-
-  if (dansEquipe.length === 0 && partis.length === 0) {
-    page.appendChild(construireEtatVide());
+  if (tous.length === 0) {
+    page.append(
+      el(
+        'div',
+        { class: 'etat-vide' },
+        el('p', { text: 'Aucun employé pour l’instant.' }),
+        el('p', { class: 'etat-vide-sous-texte', text: 'Ajoutez une première personne pour commencer à monter un planning.' })
+      )
+    );
   } else {
-    page.appendChild(construireListe("Dans l'équipe", dansEquipe, false));
-    if (partis.length > 0) {
-      page.appendChild(construireListe('Partis', partis, true));
-    }
+    page.append(construireListe(`Dans l’équipe (${dansEquipe.length})`, dansEquipe, false));
+    if (partis.length > 0) page.append(construireListe(`Partis (${partis.length})`, partis, true));
   }
+  conteneur.replaceChildren(page);
 
-  conteneur.appendChild(page);
-
-  function construireEtatVide() {
-    const vide = document.createElement('div');
-    vide.className = 'etat-vide';
-    vide.innerHTML = `
-      <p>Aucun employé pour l'instant.</p>
-      <p class="etat-vide-sous-texte">Ajoutez votre première recrue pour commencer à monter un planning.</p>
-    `;
-    return vide;
+  /** Résumé d'une semaine type : « 5 jours · 37h30 », ou une invitation à la définir. */
+  function resumeSemaineType(employe) {
+    const entrees = (employe.semaineType ?? []).filter(Boolean);
+    const travailles = entrees.filter((e) => statutsParId.get(e.statutId)?.compteCommeTravail && e.heureDebut && e.heureFin);
+    if (travailles.length === 0) return 'Semaine type à définir';
+    const heures = travailles.reduce((total, e) => total + dureeHeures(e.heureDebut, e.heureFin), 0);
+    return `${travailles.length} jour${travailles.length > 1 ? 's' : ''} · ${formatHeures(heures)}`;
   }
 
   function construireListe(titre, liste, estParti) {
-    const section = document.createElement('section');
-    section.className = 'section-employes';
-    const h3 = document.createElement('h3');
-    h3.textContent = titre;
-    section.appendChild(h3);
-
-    const table = document.createElement('table');
-    table.className = 'table-employes';
-    liste.forEach((employe) => {
-      const ligne = document.createElement('tr');
-      if (estParti) ligne.classList.add('ligne-inactive');
-
-      const tdNom = document.createElement('td');
-      const nom = document.createElement('span');
-      nom.textContent = `${employe.prenom} ${employe.nom}`;
-      tdNom.appendChild(nom);
-      // finCle: 0 est une sentinelle (aucune période de présence), pas une semaine réelle — pas de mention dans ce cas.
+    const lignes = liste.map((employe) => {
+      const celluleNom = el('td', {}, el('span', { class: 'nom-employe', text: nomComplet(employe) }));
+      // finCle: 0 est une sentinelle (aucune période de présence), pas une semaine réelle : pas de mention dans ce cas.
       if (estParti && employe.finCle) {
         const { annee: a, numero: n } = depuisCleSemaine(employe.finCle);
-        const mention = document.createElement('span');
-        mention.className = 'mention-depart';
-        mention.textContent = ` — dernière semaine dans l'effectif : semaine ${n} — ${a}`;
-        tdNom.appendChild(mention);
+        celluleNom.append(el('span', { class: 'mention', text: `dernière semaine dans l’équipe : ${n} de ${a}` }));
       }
-      ligne.appendChild(tdNom);
-
-      const tdActions = document.createElement('td');
-      tdActions.className = 'cellule-actions';
-
-      const boutonEditer = document.createElement('button');
-      boutonEditer.type = 'button';
-      boutonEditer.className = 'bouton-icone';
-      boutonEditer.textContent = 'Éditer';
-      boutonEditer.addEventListener('click', () => ouvrirDialogueEmploye(employe));
-      tdActions.appendChild(boutonEditer);
-
-      const boutonSemaineType = document.createElement('button');
-      boutonSemaineType.type = 'button';
-      boutonSemaineType.className = 'bouton-icone';
-      boutonSemaineType.textContent = 'Semaine type';
-      boutonSemaineType.addEventListener('click', () => ouvrirDialogueSemaineType(employe));
-      tdActions.appendChild(boutonSemaineType);
-
-      const boutonArchiver = document.createElement('button');
-      boutonArchiver.type = 'button';
-      boutonArchiver.className = 'bouton-icone';
-      boutonArchiver.textContent = estParti ? 'Réintégrer' : 'Archiver';
-      boutonArchiver.addEventListener('click', async () => {
-        if (estParti) {
-          await reintegrerEmploye(employe.id);
-        } else {
-          const precedente = semaineVoisine(annee, numero, -1);
-          await marquerEmployeParti(employe.id, cleSemaine(precedente.annee, precedente.numero));
-        }
-        rafraichir();
-      });
-      tdActions.appendChild(boutonArchiver);
-
-      if (!idsAvecCases.has(employe.id)) {
-        const boutonSupprimer = document.createElement('button');
-        boutonSupprimer.type = 'button';
-        boutonSupprimer.className = 'bouton-icone bouton-danger';
-        boutonSupprimer.textContent = 'Supprimer';
-        boutonSupprimer.addEventListener('click', () => ouvrirDialogueSuppression(employe));
-        tdActions.appendChild(boutonSupprimer);
-      }
-
-      ligne.appendChild(tdActions);
-      table.appendChild(ligne);
+      return el(
+        'tr',
+        { class: estParti ? 'ligne-partie' : '' },
+        celluleNom,
+        el('td', { class: 'cellule-resume', text: resumeSemaineType(employe) }),
+        el(
+          'td',
+          { class: 'cellule-actions' },
+          el('button', { type: 'button', class: 'bouton-texte', text: 'Semaine type', on: { click: () => ouvrirDialogueSemaineType(employe) } }),
+          el('button', { type: 'button', class: 'bouton-texte', text: 'Renommer', on: { click: () => ouvrirDialogueEmploye(employe) } }),
+          el('button', {
+            type: 'button',
+            class: 'bouton-texte',
+            text: estParti ? 'Réintégrer' : 'Marquer parti',
+            on: { click: () => (estParti ? reintegrer(employe) : marquerParti(employe)) },
+          }),
+          !idsAvecCases.has(employe.id) &&
+            el('button', { type: 'button', class: 'bouton-texte bouton-texte-danger', text: 'Supprimer', on: { click: () => supprimer(employe) } })
+        )
+      );
     });
-    section.appendChild(table);
-    return section;
+    return el('section', { class: 'section-employes' }, el('h2', { text: titre }), el('table', { class: 'table-liste' }, el('tbody', {}, lignes)));
   }
 
-  function ouvrirDialogueEmploye(employe) {
-    const estEdition = Boolean(employe);
-    const dialogue = document.createElement('dialog');
-    dialogue.className = 'dialogue';
-    dialogue.innerHTML = `
-      <form method="dialog" class="formulaire">
-        <h3>${estEdition ? "Éditer l'employé" : 'Ajouter un employé'}</h3>
-        <label>Prénom <input type="text" name="prenom" required value="${champEchappe(employe?.prenom)}" /></label>
-        <label>Nom <input type="text" name="nom" required value="${champEchappe(employe?.nom)}" /></label>
-        <div class="dialogue-actions">
-          <button type="button" class="bouton" data-annuler>Annuler</button>
-          <button type="submit" class="bouton bouton-accent">Enregistrer</button>
-        </div>
-      </form>
-    `;
-    document.body.appendChild(dialogue);
-    dialogue.querySelector('[data-annuler]').addEventListener('click', () => dialogue.close());
-    dialogue.addEventListener('close', () => dialogue.remove());
-    dialogue.querySelector('form').addEventListener('submit', async (evt) => {
-      const donnees = Object.fromEntries(new FormData(evt.target).entries());
-      if (estEdition) {
-        await modifierEmploye(employe.id, donnees);
-      } else {
-        await ajouterEmploye({ ...donnees, debutCle: cleActuelle });
-      }
-      dialogue.close();
-      rafraichir();
-    });
-    dialogue.showModal();
+  async function marquerParti(employe) {
+    const precedente = semaineVoisine(annee, numero, -1);
+    await marquerEmployeParti(employe.id, cleSemaine(precedente.annee, precedente.numero));
+    await rafraichir();
+    notifier(`${employe.prenom} ne figure plus sur les semaines à venir. Ses anciens plannings sont conservés.`);
   }
 
-  function ouvrirDialogueSuppression(employe) {
-    const dialogue = document.createElement('dialog');
-    dialogue.className = 'dialogue';
-    dialogue.innerHTML = `
-      <div class="formulaire">
-        <h3>Supprimer ${champEchappe(employe.prenom)} ${champEchappe(employe.nom)} ?</h3>
-        <p>Cet employé n'a aucune case de planning enregistrée. Cette action est irréversible.</p>
-        <div class="dialogue-actions">
-          <button type="button" class="bouton" data-annuler>Annuler</button>
-          <button type="button" class="bouton bouton-danger" data-confirmer>Supprimer</button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(dialogue);
-    dialogue.querySelector('[data-annuler]').addEventListener('click', () => dialogue.close());
-    dialogue.addEventListener('close', () => dialogue.remove());
-    dialogue.querySelector('[data-confirmer]').addEventListener('click', async () => {
-      await supprimerEmploye(employe.id);
-      dialogue.close();
-      rafraichir();
+  async function reintegrer(employe) {
+    await reintegrerEmploye(employe.id);
+    await rafraichir();
+    notifier(`${employe.prenom} est de retour dans l’équipe.`);
+  }
+
+  async function supprimer(employe) {
+    const ok = await confirmer({
+      titre: `Supprimer ${nomComplet(employe)} ?`,
+      texte: 'Cette personne n’a aucune case de planning enregistrée. La suppression est définitive.',
+      libelle: 'Supprimer',
+      danger: true,
     });
-    dialogue.showModal();
+    if (!ok) return;
+    await supprimerEmploye(employe.id);
+    rafraichir();
+  }
+
+  async function ouvrirDialogueEmploye(employe) {
+    const donnees = await ouvrirDialogue(employe ? `Renommer ${employe.prenom}` : 'Ajouter un employé', (fermer) => {
+      const champPrenom = el('input', { type: 'text', name: 'prenom', required: true, value: employe?.prenom ?? '', autocomplete: 'off' });
+      const champNom = el('input', { type: 'text', name: 'nom', required: true, value: employe?.nom ?? '', autocomplete: 'off' });
+      return el(
+        'form',
+        {
+          method: 'dialog',
+          class: 'formulaire',
+          on: {
+            submit: (evt) => {
+              evt.preventDefault();
+              fermer({ prenom: champPrenom.value, nom: champNom.value });
+            },
+          },
+        },
+        el('label', {}, 'Prénom', champPrenom),
+        el('label', {}, 'Nom', champNom),
+        !employe && el('p', { class: 'aide', text: `Figurera sur le planning à partir de la semaine ${numero}.` }),
+        ligneActions(bouton('Annuler', { on: () => fermer() }), bouton('Enregistrer', { variante: 'accent', type: 'submit' }))
+      );
+    });
+    if (!donnees) return;
+    if (employe) await modifierEmploye(employe.id, donnees);
+    else await ajouterEmploye({ ...donnees, debutCle: cleActuelle });
+    rafraichir();
   }
 
   async function ouvrirDialogueSemaineType(employe) {
-    const statuts = await listerStatuts();
-    const template =
-      Array.isArray(employe.semaineType) && employe.semaineType.length === 7
-        ? employe.semaineType
-        : Array(7).fill(null);
-
-    const dialogue = document.createElement('dialog');
-    dialogue.className = 'dialogue dialogue-large';
-
-    const form = document.createElement('form');
-    form.method = 'dialog';
-    form.className = 'formulaire';
-
-    const titre = document.createElement('h3');
-    titre.textContent = `Semaine type de ${employe.prenom}`;
-    form.appendChild(titre);
-
-    const grille = document.createElement('div');
-    grille.className = 'grille-semaine-type';
-    const lignes = NOMS_JOURS.map((nomJour, jour) =>
-      construireLigneJourType(nomJour, template[jour], statuts)
+    const modele = Array.isArray(employe.semaineType) && employe.semaineType.length === 7 ? employe.semaineType : Array(7).fill(null);
+    const nouveau = await ouvrirDialogue(
+      `Semaine type de ${employe.prenom}`,
+      (fermer) => {
+        const lignes = NOMS_JOURS.map((nomJour, jour) => construireLigneJourType(nomJour, modele[jour], statuts));
+        const total = el('p', { class: 'aide' });
+        const majTotal = () => {
+          const heures = lignes.reduce((somme, l) => somme + l.heures(), 0);
+          total.textContent = heures > 0 ? `Total de la semaine type : ${formatHeures(heures)}` : '';
+        };
+        const grille = el('div', { class: 'grille-semaine-type', on: { input: majTotal, change: majTotal } }, lignes.map((l) => l.element));
+        majTotal();
+        return el(
+          'form',
+          {
+            method: 'dialog',
+            class: 'formulaire',
+            on: {
+              submit: (evt) => {
+                evt.preventDefault();
+                const invalide = lignes.find((l) => !l.valide());
+                if (invalide) {
+                  invalide.signaler();
+                  return;
+                }
+                fermer(lignes.map((l) => l.valeur()));
+              },
+            },
+          },
+          el('p', { class: 'aide', text: 'Laissez « Non défini » les jours qui changent d’une semaine à l’autre.' }),
+          grille,
+          total,
+          ligneActions(
+            bouton('Tout effacer', {
+              on: () => {
+                lignes.forEach((l) => l.reinitialiser());
+                majTotal();
+              },
+            }),
+            bouton('Annuler', { on: () => fermer() }),
+            bouton('Enregistrer', { variante: 'accent', type: 'submit' })
+          )
+        );
+      },
+      { large: true }
     );
-    lignes.forEach((ligne) => grille.appendChild(ligne.element));
-    form.appendChild(grille);
-
-    const actions = document.createElement('div');
-    actions.className = 'dialogue-actions';
-
-    const boutonEffacer = document.createElement('button');
-    boutonEffacer.type = 'button';
-    boutonEffacer.className = 'bouton';
-    boutonEffacer.textContent = 'Tout effacer';
-    boutonEffacer.addEventListener('click', () => lignes.forEach((l) => l.reinitialiser()));
-    actions.appendChild(boutonEffacer);
-
-    const boutonAnnuler = document.createElement('button');
-    boutonAnnuler.type = 'button';
-    boutonAnnuler.className = 'bouton';
-    boutonAnnuler.textContent = 'Annuler';
-    boutonAnnuler.addEventListener('click', () => dialogue.close());
-    actions.appendChild(boutonAnnuler);
-
-    const boutonEnregistrer = document.createElement('button');
-    boutonEnregistrer.type = 'submit';
-    boutonEnregistrer.className = 'bouton bouton-accent';
-    boutonEnregistrer.textContent = 'Enregistrer';
-    actions.appendChild(boutonEnregistrer);
-
-    form.appendChild(actions);
-    dialogue.appendChild(form);
-    document.body.appendChild(dialogue);
-    dialogue.addEventListener('close', () => dialogue.remove());
-    form.addEventListener('submit', async () => {
-      const nouveauTemplate = lignes.map((l) => l.valeur());
-      await definirSemaineType(employe.id, nouveauTemplate);
-      dialogue.close();
-      rafraichir();
-    });
-    dialogue.showModal();
-  }
-
-  function rafraichir() {
-    conteneur.innerHTML = '';
-    afficher(conteneur);
+    if (!nouveau) return;
+    await definirSemaineType(employe.id, nouveau);
+    rafraichir();
   }
 }
 
-/** Construit une ligne éditable (statut + horaire) pour un jour de la semaine type. */
+/** Construit une ligne éditable (statut + horaires) pour un jour de la semaine type. */
 function construireLigneJourType(nomJour, entree, statuts) {
-  const ligne = document.createElement('div');
-  ligne.className = 'ligne-jour-type';
+  const selectStatut = el(
+    'select',
+    { 'aria-label': `Statut du ${nomJour.toLowerCase()}` },
+    el('option', { value: '', text: 'Non défini' }),
+    statuts.map((s) => el('option', { value: String(s.id), text: s.nom, selected: entree?.statutId === s.id }))
+  );
+  const champ = (libelle, valeur) =>
+    el('input', {
+      type: 'text',
+      class: 'champ-heure',
+      inputMode: 'numeric',
+      autocomplete: 'off',
+      placeholder: '13h30',
+      maxLength: 5,
+      value: valeur ?? '',
+      'aria-label': `${libelle} du ${nomJour.toLowerCase()}`,
+    });
+  const champDebut = champ('Heure de début', entree?.heureDebut);
+  const champFin = champ('Heure de fin', entree?.heureFin);
+  const duree = el('span', { class: 'jour-type-duree' });
 
-  const label = document.createElement('span');
-  label.className = 'jour-type-nom';
-  label.textContent = nomJour;
-  ligne.appendChild(label);
+  const statutChoisi = () => statuts.find((s) => s.id === Number(selectStatut.value));
+  const lire = () => ({ heureDebut: analyserHeure(champDebut.value), heureFin: analyserHeure(champFin.value) });
 
-  const selectStatut = document.createElement('select');
-  const optionVide = document.createElement('option');
-  optionVide.value = '';
-  optionVide.textContent = 'Non défini';
-  selectStatut.appendChild(optionVide);
-  statuts.forEach((statut) => {
-    const option = document.createElement('option');
-    option.value = String(statut.id);
-    option.textContent = statut.nom;
-    if (entree?.statutId === statut.id) option.selected = true;
-    selectStatut.appendChild(option);
-  });
-  ligne.appendChild(selectStatut);
-
-  const champDebut = document.createElement('input');
-  champDebut.type = 'time';
-  champDebut.value = entree?.heureDebut || '';
-  const champFin = document.createElement('input');
-  champFin.type = 'time';
-  champFin.value = entree?.heureFin || '';
-  ligne.append(champDebut, champFin);
-
-  function majEtatChamps() {
-    const statut = statuts.find((s) => s.id === Number(selectStatut.value));
-    const travaille = Boolean(statut?.compteCommeTravail);
+  function majEtat() {
+    const travaille = Boolean(statutChoisi()?.compteCommeTravail);
     champDebut.disabled = !travaille;
     champFin.disabled = !travaille;
-  }
-  selectStatut.addEventListener('change', majEtatChamps);
-  majEtatChamps();
-
-  return {
-    element: ligne,
-    reinitialiser() {
-      selectStatut.value = '';
+    if (!travaille) {
       champDebut.value = '';
       champFin.value = '';
-      majEtatChamps();
+    }
+    const { heureDebut, heureFin } = lire();
+    duree.textContent = travaille && heureDebut && heureFin ? formatHeures(dureeHeures(heureDebut, heureFin)) : '';
+    for (const c of [champDebut, champFin]) c.removeAttribute('aria-invalid');
+  }
+  selectStatut.addEventListener('change', () => {
+    majEtat();
+    if (!champDebut.disabled) champDebut.focus();
+  });
+  for (const c of [champDebut, champFin]) {
+    c.addEventListener('input', majEtat);
+    // À la sortie du champ, l'heure comprise est réécrite au format standard (« 1330 » → « 13:30 »).
+    c.addEventListener('blur', () => {
+      const comprise = analyserHeure(c.value);
+      if (comprise) c.value = comprise;
+    });
+  }
+  majEtat();
+
+  return {
+    element: el('div', { class: 'ligne-jour-type' }, el('span', { class: 'jour-type-nom', text: nomJour }), selectStatut, champDebut, champFin, duree),
+    reinitialiser() {
+      selectStatut.value = '';
+      majEtat();
+    },
+    /** Un jour travaillé doit avoir deux heures valides et différentes. */
+    valide() {
+      if (!statutChoisi()?.compteCommeTravail) return true;
+      const { heureDebut, heureFin } = lire();
+      return Boolean(heureDebut && heureFin && heureDebut !== heureFin);
+    },
+    signaler() {
+      const fautif = analyserHeure(champDebut.value) ? champFin : champDebut;
+      fautif.setAttribute('aria-invalid', 'true');
+      fautif.focus();
+    },
+    heures() {
+      const { heureDebut, heureFin } = lire();
+      return statutChoisi()?.compteCommeTravail && heureDebut && heureFin ? dureeHeures(heureDebut, heureFin) : 0;
     },
     valeur() {
-      if (!selectStatut.value) return null;
-      const statutId = Number(selectStatut.value);
-      const statut = statuts.find((s) => s.id === statutId);
-      if (statut?.compteCommeTravail) {
-        if (!champDebut.value || !champFin.value) return null;
-        return { statutId, heureDebut: champDebut.value, heureFin: champFin.value };
-      }
-      return { statutId, heureDebut: null, heureFin: null };
+      const statut = statutChoisi();
+      if (!statut) return null;
+      if (statut.compteCommeTravail) return { statutId: statut.id, ...lire() };
+      return { statutId: statut.id, heureDebut: null, heureFin: null };
     },
   };
-}
-
-function champEchappe(valeur) {
-  if (!valeur) return '';
-  const div = document.createElement('div');
-  div.textContent = valeur;
-  return div.innerHTML;
 }

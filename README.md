@@ -18,6 +18,23 @@ npm run build
 npm run preview
 ```
 
+## Tests
+
+```bash
+npm test
+```
+
+Tests automatiques des fonctions pures (durées, lecture des heures tapées, semaines, effectif,
+migrations v1 → v4), lancés avec le lanceur intégré à Node : aucune dépendance en plus. Pour
+vérifier en prime un vrai fichier d'export :
+
+```bash
+EXPORT_REEL=chemin/vers/planning-manager-….json npm test
+```
+
+Les fichiers d'export contiennent des données personnelles : ils sont exclus du dépôt par le
+`.gitignore` et doivent être rangés hors de ce dossier.
+
 ## Architecture
 
 - `src/db/` — accès aux données (Dexie/IndexedDB) : employés, statuts, semaines, cases, backup,
@@ -25,11 +42,36 @@ npm run preview
 - `src/views/` — un module par écran (`planning`, `employes`, `archives`, `reglages`, `export`),
   chacun exporte une fonction `afficher(conteneur, params)` qui construit le DOM directement
   (pas de framework, pas de virtual DOM).
-- `src/utils/` — calcul des semaines ISO, calcul des horaires/heures, calcul de l'effectif visible
-  d'une semaine.
+- `src/utils/` — calcul des semaines ISO, calcul des horaires/heures et lecture des heures tapées
+  librement (`analyserHeure`), calcul de l'effectif visible d'une semaine, créneaux proposés en un
+  clic (`creneaux.js`), sauvegarde différée des notes (`differe.js`).
+- `src/ui/` — briques d'interface partagées par les écrans : création d'éléments (`dom.js`),
+  boîtes de dialogue et confirmation (`dialogue.js`), bulle de saisie et menus (`flottant.js`),
+  messages brefs (`toast.js`).
+- `tests/` — tests automatiques (`npm test`).
 - `src/styles/` — `main.css` (variables + mise en page) et `print.css` (impression A4 paysage).
 - `src/main.js` — routeur minimal basé sur le hash de l'URL (`#/planning?annee=…&semaine=…`), et
-  point d'entrée de la vérification de version des données au démarrage.
+  point d'entrée de la vérification de version des données au démarrage. Chaque écran se construit
+  dans un conteneur détaché, mis en place seulement s'il correspond encore à la dernière navigation
+  demandée. Toute erreur non traitée est affichée à l'écran.
+
+## Écran Planning
+
+- **Saisie d'une case** : la bulle propose les créneaux en un clic (le créneau habituel de la
+  personne ce jour-là d'après sa semaine type, puis les plus fréquents des douze dernières semaines
+  renseignées), deux champs d'heure en saisie libre (« 1330 », « 13h30 », « 13 »), et les statuts.
+  Les champs d'heure ne sont enregistrés qu'à la validation : Entrée, bouton OK, ou clic en dehors
+  quand les deux heures sont valides. Échap annule. Seule la case modifiée est repeinte, avec le
+  total de la ligne et le pied de grille.
+- **Actions d'une ligne** (menu « ⋯ ») : appliquer la semaine type, semaine entière en absence
+  (statut + jours cochés), vider la semaine de la personne, la retirer de la semaine.
+- **Semaines types** : remplit la grille avec la semaine type de toute l'équipe ; sur une semaine
+  déjà entamée, complète les cases vides ou remplace, au choix.
+- **Dupliquer** : copie par défaut les jours travaillés et les repos ; une case à cocher ajoute les
+  absences (CP, maladie, formation, férié).
+- **Pied de grille** : nombre de personnes présentes par jour et total d'heures de l'équipe.
+- **Notes** : enregistrées pendant la frappe. Les notes de la semaine vivent dans `semaines.notes` ;
+  le pense-bête, affiché sur toutes les semaines, vit dans la table `meta`.
 
 Toutes les données vivent dans IndexedDB. Réglages → Exporter/Importer sert de sauvegarde unique.
 
@@ -58,7 +100,9 @@ Quatre tables Dexie, plus une table `meta` (clé/valeur) :
   parce qu'il a quitté l'équipe ou a été retiré d'une semaine** : archiver un employé ou le
   retirer d'une semaine ne fait qu'ajuster sa visibilité, jamais ses données. Seul un vrai
   « Vider » sur une case précise, action volontaire de l'utilisateur, l'efface.
-- `meta` — table clé/valeur ; contient l'entrée `versionDonnees`.
+- `meta` — table clé/valeur ; contient l'entrée `versionDonnees`, plus deux réglages hors format
+  versionné : `pensebete` (le pense-bête permanent) et `dernierExport` (date du dernier export, pour
+  le rappel de sauvegarde sur l'onglet Réglages).
 
 ### Effectif d'une semaine
 
@@ -76,9 +120,11 @@ conditions est vraie :
 
 `retires` l'emporte sur tout le reste, y compris sur l'existence de cases : c'est ce qui permet
 de masquer un employé d'une semaine précise sans toucher à ses horaires. Un employé visible
-seulement via la condition 1 ou 2 (donc hors de sa période) est signalé `horsEffectif` : c'est le
-cas d'un collaborateur parti, consulté sur une semaine où il travaillait encore — sa ligne
-apparaît grisée mais reste entièrement modifiable tant que la semaine n'est pas archivée.
+seulement via la condition 1 ou 2 (donc hors de sa période) est signalé `horsEffectif`, avec un
+`motif` : `'apres'` pour un collaborateur parti, consulté sur une semaine où il travaillait encore
+(ligne grisée, mention « parti », en fin de liste) ; `'avant'` pour une recrue ajoutée à une semaine
+antérieure à son arrivée (mention « ajouté », ligne normale). Dans les deux cas la ligne reste
+entièrement modifiable tant que la semaine n'est pas archivée.
 
 Archiver un employé (écran Employés) pose `finCle` à la clé de la semaine *précédant* la semaine
 courante : il disparaît donc de la semaine courante et des semaines futures, mais reste visible
@@ -110,3 +156,8 @@ décalage — y compris après plusieurs mises à jour de l'application entre-te
 Le même jeu de fonctions de migration sert à l'import d'un fichier JSON (`src/db/backup.js`,
 `importerDonnees`) : un fichier plus ancien que la version courante est migré à la volée avant
 d'être chargé ; un fichier plus récent que l'application est refusé.
+
+Quand la base contient déjà des données, l'import télécharge d'abord une copie de l'état actuel
+(`planning-manager-avant-import-….json`). Le fichier exporté peut porter un champ optionnel
+`pensebete` : il ne fait pas partie du format versionné, et une version de l'application qui ne le
+connaît pas l'ignore à l'import.

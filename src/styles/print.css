@@ -26,17 +26,16 @@
 
   .feuille-export {
     border: none;
-    box-shadow: none;
     padding: 0;
     max-width: none;
   }
 
   /* En-tête façon document imprimé : serif fin, capitales espacées mais pas de
      gras appuyé — élégant plutôt que martelé. */
-  .entete-export { margin-bottom: 1.1rem; }
-  .entete-export h2 {
+  .entete-export { margin-bottom: 5mm; }
+  .entete-export h1 {
     font-family: Georgia, 'Times New Roman', Cambria, serif;
-    font-size: 1.3rem;
+    font-size: 15pt;
     font-weight: 500;
     letter-spacing: 0.07em;
     text-transform: uppercase;
@@ -44,6 +43,7 @@
   }
   .entete-export-dates {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    font-size: 10pt;
     color: #333;
     font-weight: 500;
     letter-spacing: 0.02em;
@@ -63,16 +63,20 @@
     border: none;
     border-bottom: 1px solid #000;
     border-right: 1px solid #ddd;
-    padding: 0.55rem 0.3rem;
-    font-size: 0.8rem;
+    padding: 1.5mm 1mm;
+    font-size: 9pt;
     font-weight: 600;
   }
   .table-export th:last-child { border-right: none; }
-  .table-export th .jour-date { color: #666; }
+  .table-export th .jour-date { color: #666; font-size: 7.5pt; }
 
+  /* La hauteur des lignes et le corps du texte viennent de l'écran Aperçu : ils se
+     resserrent quand l'équipe est nombreuse pour que tout tienne sur une page. */
   .table-export td {
-    padding: 0.55rem 0.4rem;
-    font-size: 0.92rem;
+    height: var(--hauteur-ligne, 9.2mm);
+    padding: 0 1.5mm;
+    font-size: var(--corps-impression, 10.5pt);
+    line-height: 1.1;
     border: none;
     border-bottom: 1px solid #ddd;
     border-right: 1px solid #ddd;
@@ -81,7 +85,7 @@
   .table-export tbody tr:last-child td { border-bottom: none; }
   .table-export tbody tr:nth-child(even) { background: none; }
 
-  .nom-export { border-right: 1px solid #000 !important; font-weight: 600; }
+  .table-export .nom-export { border-right: 1px solid #000; font-weight: 600; padding-left: 2.5mm; }
   .case-aucune { color: #bbb; }
 
   /* Pas de puce/badge à l'impression : juste du texte dans la cellule. Le
@@ -89,19 +93,18 @@
      (pas du monospace), un statut de repos par un gris — jamais par la couleur. */
   .badge-export {
     display: inline;
-    background: none !important;
-    border: none !important;
+    background: none;
+    border: none;
     padding: 0;
     min-width: 0;
     border-radius: 0;
-    color: #666 !important;
+    color: #666;
+    font-size: inherit;
     font-weight: 400;
   }
   .badge-travail {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif !important;
-    color: #000 !important;
+    color: #000;
     font-weight: 600;
-    font-size: 0.95rem;
     letter-spacing: 0.01em;
     font-variant-numeric: tabular-nums;
   }

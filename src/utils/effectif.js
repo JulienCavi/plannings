@@ -16,8 +16,10 @@ import { cleSemaine } from './semaine.js';
  * permet de masquer quelqu'un sans supprimer ses horaires.
  *
  * `horsEffectif` (sur chaque résultat) est vrai quand l'employé n'est visible que par la
- * condition 1 ou 2, c'est-à-dire en dehors de sa période de présence (typiquement : un
- * collaborateur parti, consulté sur une semaine où il travaillait encore).
+ * condition 1 ou 2, c'est-à-dire en dehors de sa période de présence. `motif` dit de quel
+ * côté : `'apres'` pour un collaborateur parti consulté sur une semaine où il travaillait
+ * encore, `'avant'` pour une recrue ajoutée à une semaine antérieure à son arrivée, `null`
+ * quand il est dans sa période.
  *
  * Tolère toute donnée absente ou incomplète : `semaine` peut être `null`/`undefined` (semaine
  * jamais écrite en base — aucun appelant n'a besoin de construire un objet de substitution) ;
@@ -33,8 +35,8 @@ import { cleSemaine } from './semaine.js';
  * @param {number} numero
  * @param {{retires?: number[], ajoutes?: number[]}|null|undefined} semaine
  * @param {Array<{employeId: number}>|undefined} cases
- * @returns {{employe: object, horsEffectif: boolean}[]} triés : d'abord ceux dans leur période
- *   (par prénom), puis les `horsEffectif` (par prénom).
+ * @returns {{employe: object, horsEffectif: boolean, motif: 'avant'|'apres'|null}[]} triés par
+ *   prénom, les collaborateurs partis (`motif === 'apres'`) regroupés en fin de liste.
  */
 export function effectifVisible(employes, annee, numero, semaine, cases) {
   const cleW = cleSemaine(annee, numero);
@@ -54,12 +56,15 @@ export function effectifVisible(employes, annee, numero, semaine, cases) {
 
     if (!dansPeriode && !estAjoute && !aCase) continue;
 
-    resultat.push({ employe, horsEffectif: !dansPeriode });
+    const motif = dansPeriode ? null : debutCle != null && cleW < debutCle ? 'avant' : 'apres';
+    resultat.push({ employe, horsEffectif: !dansPeriode, motif });
   }
 
   resultat.sort((a, b) => {
-    if (a.horsEffectif !== b.horsEffectif) return a.horsEffectif ? 1 : -1;
-    return a.employe.prenom.localeCompare(b.employe.prenom);
+    const aParti = a.motif === 'apres';
+    const bParti = b.motif === 'apres';
+    if (aParti !== bParti) return aParti ? 1 : -1;
+    return a.employe.prenom.localeCompare(b.employe.prenom, 'fr');
   });
 
   return resultat;

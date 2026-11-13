@@ -1,2 +1,6 @@
 node_modules/
 dist/
+
+# Exports et sauvegardes : données personnelles de l'équipe, jamais dans le dépôt.
+planning-manager-*.json
+*.zip
